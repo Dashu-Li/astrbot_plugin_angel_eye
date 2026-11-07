@@ -232,7 +232,7 @@ def format_rich_segment(segment, depth=0):
         if name and kind != "image":
             lines.append("名称：" + name)
         size = data.get("size", data.get("file_size"))
-        if isinstance(size, str) and size.isdigit() and len(size) < 20:
+        if isinstance(size, str) and size.isascii() and size.isdigit() and len(size) < 20:
             size = int(size)
         if isinstance(size, (int, float)) and not isinstance(size, bool) and size >= 0:
             lines.append(f"大小：{size} 字节")

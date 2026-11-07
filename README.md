@@ -120,3 +120,7 @@ python -m unittest discover -s tests -p 'test_rich_content.py'
 
 - **AstrBot**: [https://github.com/your-astrbot-repo](https://github.com/your-astrbot-repo)
 - **萌娘百科 MCP 工具**: [https://github.com/kawayiYokami/moegirl-mcp](https://github.com/kawayiYokami/moegirl-mcp) (原萌娘百科查询功能已迁移至此 MCP 服务器)
+
+补充边界：成功的原生语音转写保留为正文，不再重新添加同段旧音频链接；未转写的语音仍保留原元数据。可选时间、切片和发送者参数接受 null；空白时间/切片与发送者 0 表示省略相应筛选。
+
+关键词查询会先尝试展开查询范围内的缓存转发：只检查最近 64 条含转发标记的记录，最多展开 3 个远程资源，并与结果展示共用读取预算。查询状态包含 `forward:index_bounded` 时，这次展开不代表全部远程转发正文已建立索引；原始内嵌正文继续正常检索。不同协议端及不同连接的分页游标不混用，同秒消息不会覆盖已经确认的尾部边界。

@@ -1,9 +1,4 @@
-"""Synthetic rich-message regressions; no sends, downloads or model calls.
-
-These tests require AstrBot's Python dependencies and API modules, but never
-construct a running bot. An isolated package alias loads this checkout even
-when its directory has a different name from the installed plugin.
-"""
+"""Synthetic regressions; no QQ sends, downloads, providers or real messages."""
 
 import sys
 from pathlib import Path
@@ -21,13 +16,16 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from astrbot.api.message_components import File, Json, Plain, Reply
+from astrbot.api.message_components import File, Json, Plain, Record, Reply
 from astrbot.core.platform.astrbot_message import AstrBotMessage
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.provider.entities import ProviderRequest
 
-from _angel_eye_under_test.core.event_enrichment import component_segment, enrich_event, enrich_request
+from _angel_eye_under_test.core.event_enrichment import (
+    QUOTE_BODY_PREFIX, VOICE_TRANSCRIPT_PREFIX,
+    component_segment, enrich_event, enrich_request,
+)
 from _angel_eye_under_test.core.formatter import format_unified_message
 from _angel_eye_under_test.core.rich_message import extract_json_card, extract_rich_segments, extract_xml_card, format_rich_segment, public_url
 from _angel_eye_under_test.services.history_repository import HistoryRepository
@@ -163,6 +161,156 @@ class RenderingTests(unittest.TestCase):
 
 
 class AsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_successful_native_stt_is_labeled_without_stale_audio_resource(self):
+        transcript = "你现在可以识别语音吗？"
+        native_plain = Plain(text=transcript)
+        event = FakeEvent([native_plain], raw={"message": [segment(
+            "record", file="voice.amr", url="https://example.org/voice.amr",
+        )]})
+        blocks = await enrich_event(event, RichContentResolver())
+        self.assertIs(event.get_messages()[0], native_plain)
+        self.assertIn(VOICE_TRANSCRIPT_PREFIX + transcript, blocks)
+        self.assertIn(VOICE_TRANSCRIPT_PREFIX + transcript, event.message_str)
+        self.assertNotIn("voice.amr", event.message_str)
+        self.assertNotIn("[语音]", event.message_str)
+        self.assertEqual(event.message_obj.message_str, event.message_str)
+
+    async def test_failed_or_disabled_native_stt_keeps_audio_metadata(self):
+        event = FakeEvent([Record(file="voice.amr", url="https://example.org/voice.amr")],
+                          raw={"message": [segment("record", file="voice.amr", url="https://example.org/voice.amr")]})
+        await enrich_event(event, RichContentResolver())
+        self.assertIn("https://example.org/voice.amr", event.message_str)
+        self.assertIn("[语音]", event.message_str)
+        self.assertNotIn(VOICE_TRANSCRIPT_PREFIX, event.message_str)
+        self.assertIsInstance(event.get_messages()[0], Record)
+
+    async def test_partial_native_stt_preserves_only_unresolved_audio_resources(self):
+        for successful_first in (False, True):
+            with self.subTest(successful_first=successful_first):
+                success = Plain(text="成功转写的内容")
+                failure = Record(file="failed.amr", url="https://example.org/failed.amr")
+                raw_success = segment("record", file="success.amr", url="https://example.org/success.amr")
+                raw_failure = segment("record", file="failed.amr", url="https://example.org/failed.amr")
+                event = FakeEvent([success, failure] if successful_first else [failure, success], raw={
+                    "message": [raw_success, raw_failure] if successful_first else [raw_failure, raw_success],
+                })
+                await enrich_event(event, RichContentResolver())
+                self.assertIn(VOICE_TRANSCRIPT_PREFIX + success.text, event.message_str)
+                self.assertNotIn("success.amr", event.message_str)
+                self.assertIn("https://example.org/failed.amr", event.message_str)
+
+    async def test_stt_alignment_accounts_for_coalesced_text_and_blank_segments(self):
+        event = FakeEvent([
+            Plain(text="前文"), Plain(text="语音正文"),
+            Record(file="failed.amr", url="https://example.org/failed.amr"),
+        ], raw={"message": [
+            segment("text", text="  前"), segment("text", text="文 "),
+            segment("record", url="https://example.org/success.amr"),
+            segment("text", text="   "),
+            segment("record", url="https://example.org/failed.amr"),
+        ]})
+        await enrich_event(event, RichContentResolver())
+        self.assertIn(VOICE_TRANSCRIPT_PREFIX + "语音正文", event.message_str)
+        self.assertNotIn("success.amr", event.message_str)
+        self.assertIn("https://example.org/failed.amr", event.message_str)
+
+    async def test_ambiguous_partial_stt_does_not_guess_raw_positions(self):
+        event = FakeEvent([
+            Plain(text="前文"), Plain(text="第三方插入内容"), Plain(text="语音正文"),
+            Record(file="failed.amr", url="https://example.org/failed.amr"),
+        ], raw={"message": [
+            segment("text", text="前文"),
+            segment("record", url="https://example.org/success.amr"),
+            segment("record", url="https://example.org/failed.amr"),
+        ]})
+        await enrich_event(event, RichContentResolver())
+        self.assertNotIn(VOICE_TRANSCRIPT_PREFIX, event.message_str)
+        self.assertIn("https://example.org/success.amr", event.message_str)
+        self.assertIn("https://example.org/failed.amr", event.message_str)
+
+    async def test_all_resolved_stt_can_use_extra_plain_after_adapter_skips_unknown_segment(self):
+        event = FakeEvent([Plain(text="前文"), Plain(text="语音正文")], raw={"message": [
+            segment("text", text="前文"), segment("unknown"),
+            segment("record", url="https://example.org/success.amr"),
+        ]})
+        await enrich_event(event, RichContentResolver())
+        self.assertIn(VOICE_TRANSCRIPT_PREFIX + "语音正文", event.message_str)
+        self.assertNotIn("success.amr", event.message_str)
+
+    async def test_missing_audio_slot_is_not_assumed_to_have_a_transcript(self):
+        event = FakeEvent([Plain(text="仅有一段可读文字")], raw={"message": [
+            segment("unknown"),
+            segment("record", url="https://example.org/first.amr"),
+            segment("record", url="https://example.org/second.amr"),
+        ]})
+        await enrich_event(event, RichContentResolver())
+        self.assertNotIn(VOICE_TRANSCRIPT_PREFIX, event.message_str)
+        self.assertIn("first.amr", event.message_str)
+        self.assertIn("second.amr", event.message_str)
+
+    async def test_stt_preserves_other_rich_cards(self):
+        event = FakeEvent([Plain(text="语音正文"), Json(data=card())], raw={"message": [
+            segment("record", url="https://example.org/voice.amr"),
+            segment("json", data=card()),
+        ]})
+        await enrich_event(event, RichContentResolver())
+        self.assertIn(VOICE_TRANSCRIPT_PREFIX + "语音正文", event.message_str)
+        self.assertIn("测试卡片标题", event.message_str)
+        self.assertNotIn("voice.amr", event.message_str)
+
+    async def test_stt_provenance_survives_request_rewrite_and_is_idempotent(self):
+        event = FakeEvent([Plain(text="语音正文")], raw={"message": [
+            segment("record", url="https://example.org/voice.amr"),
+        ]})
+        resolver = RichContentResolver()
+        first_blocks = await enrich_event(event, resolver)
+        first_text, first_chain = event.message_str, list(event.get_messages())
+        self.assertEqual(await enrich_event(event, resolver), first_blocks)
+        self.assertEqual(event.message_str, first_text)
+        self.assertEqual(event.get_messages(), first_chain)
+        request = ProviderRequest(prompt="AngelHeart 重建的请求正文")
+        await enrich_request(event, request, resolver)
+        self.assertIn(VOICE_TRANSCRIPT_PREFIX + "语音正文", request.prompt)
+        request_before = request.prompt
+        await enrich_request(event, request, resolver)
+        self.assertEqual(request.prompt, request_before)
+
+    async def test_quoted_new_plain_is_synced_and_retained_by_plain_only_ledger(self):
+        original_reply = Reply(id=-9, chain=[Plain(text="引用中的语音转写")], message_str="", text="")
+        parent = FakeEvent([Plain(text="能看到语音吗"), original_reply])
+        child = copy.copy(parent)
+        blocks = await enrich_event(child, RichContentResolver())
+        reply = next(c for c in child.get_messages() if isinstance(c, Reply))
+        self.assertIn("引用中的语音转写", reply.message_str)
+        self.assertIn("引用中的语音转写", reply.text)
+        quote_block = QUOTE_BODY_PREFIX + "引用中的语音转写"
+        self.assertIn(quote_block, blocks)
+        ledger_text = "".join(c.text for c in child.get_messages() if isinstance(c, Plain))
+        self.assertIn(quote_block, ledger_text)
+        self.assertIn(quote_block, child.message_str)
+        self.assertNotIn(VOICE_TRANSCRIPT_PREFIX, child.message_str)
+        self.assertEqual(original_reply.message_str, "")
+        self.assertEqual(len(parent.get_messages()), 2)
+        request = ProviderRequest(prompt="重写后正文")
+        await enrich_request(child, request, RichContentResolver())
+        self.assertIn(quote_block, request.prompt)
+        count = len(child.get_messages())
+        before = child.message_str
+        await enrich_request(child, request, RichContentResolver())
+        self.assertEqual(len(child.get_messages()), count)
+        self.assertEqual(child.message_str, before)
+        self.assertEqual(request.prompt.count(quote_block), 1)
+
+    async def test_existing_normal_quote_text_is_unchanged(self):
+        reply = Reply(id=-9, chain=[Plain(text="普通引用正文")],
+                      message_str="普通引用正文", text="普通引用正文")
+        event = FakeEvent([Plain(text="请看引用"), reply])
+        original_message = event.message_obj
+        self.assertEqual(await enrich_event(event, RichContentResolver()), [])
+        self.assertIs(event.message_obj, original_message)
+        self.assertIs(event.get_messages()[1], reply)
+        self.assertEqual(event.message_str, "请看引用")
+
     async def test_forward_resolves_and_caches_read_only_action(self):
         resolver, bot = RichContentResolver(), FakeBot()
         chain = [segment("forward", id="sample-resource")]

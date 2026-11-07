@@ -69,7 +69,7 @@ class FakeBot:
 
 
 def eye_instance():
-    obj = SimpleNamespace(_snowluma_history_cursors={}, repo=SimpleNamespace(extract_anchor=ANCHOR))
+    obj = SimpleNamespace(_snowluma_history_cursors={}, _napcat_history_cursors={}, repo=SimpleNamespace(extract_anchor=ANCHOR))
     for name, func in EM.items():
         setattr(obj, name, MethodType(func, obj))
     return obj
@@ -104,11 +104,11 @@ class HistoryCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         await obj._fetch_page(other, '123', -12)
         self.assertEqual(other.history_params()[0]['message_id'], 0)
 
-    async def test_eye_napcat_unchanged_and_plain_anchor_keeps_seq(self):
+    async def test_eye_napcat_reconfirms_unknown_cursor_and_plain_anchor_keeps_seq(self):
         obj = eye_instance()
         bot = FakeBot('NapCat', pages=[[{'message_id': -12, 'message_seq': 800}]])
         page = await obj._fetch_page(bot, '123', 999)
-        self.assertEqual(bot.history_params(), [dict(group_id=123, message_seq=999, reverseOrder=True)])
+        self.assertEqual(bot.history_params(), [dict(group_id=123, message_seq=0, reverseOrder=True)])
         self.assertEqual(ANCHOR(page[0]), 800)
 
     async def test_eye_tail_rebootstrap_can_cross_more_than_three_cached_pages(self):

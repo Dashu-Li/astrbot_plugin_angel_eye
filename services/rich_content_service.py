@@ -11,8 +11,9 @@ class RichContentResolver:
     def __init__(self):
         self._cache = {}
 
-    async def enrich_messages(self, bot, messages, *, scope):
-        budget = [3]
+    async def enrich_messages(self, bot, messages, *, scope, budget=None):
+        if budget is None:
+            budget = [3]
         result = []
         for message in messages:
             if not isinstance(message, dict):

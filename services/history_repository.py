@@ -177,9 +177,18 @@ class HistoryRepository:
         max_time = row["max_time"]
 
         if min_time is not None or max_time is not None:
+            state = self.get_sync_state(group_id)
+            cursor_time = self._conn.execute(
+                "SELECT MIN(time) AS time FROM messages "
+                "WHERE group_id = ? AND message_seq = ?",
+                (group_id, state.oldest_seq),
+            ).fetchone()["time"]
             self.upsert_sync_state(
                 group_id=group_id,
-                oldest_seq=self.rebuild_oldest_seq_from_messages(group_id),
+                # Keep a confirmed page boundary when older pages share a second.
+                oldest_seq=(self.rebuild_oldest_seq_from_messages(group_id)
+                            if state.oldest_seq is None or cursor_time != min_time
+                            else None),
                 covered_from=min_time,
                 covered_to=max_time,
             )
@@ -246,6 +255,42 @@ class HistoryRepository:
         self._conn.commit()
         inserted_count = self._conn.total_changes - before_changes
         return InsertResult(inserted_count=inserted_count, page_oldest_anchor=page_oldest_anchor)
+
+    def pending_forward_messages(self, group_id, start_time, end_time, user_ids, limit=4):
+        """Find a bounded set of unresolved forward resources in the query scope."""
+        where_sql, params = self._build_filter_where_clause(
+            group_id, start_time, end_time, None, user_ids,
+        )
+        rows = self._conn.execute(
+            f"SELECT raw_json FROM messages WHERE {where_sql} AND raw_json LIKE ? "
+            "ORDER BY time DESC, id DESC LIMIT 64",
+            [*params, '%"forward"%'],
+        ).fetchall()
+        result = []
+        for row in rows:
+            message = json.loads(row["raw_json"])
+            chain = message.get("message", [])
+            if isinstance(chain, list) and any(
+                isinstance(part, dict) and part.get("type") == "forward"
+                and isinstance(part.get("data"), dict)
+                and not part["data"].get("content")
+                and part["data"].get("id", part["data"].get("message_id")) is not None
+                for part in chain
+            ):
+                result.append(message)
+                if len(result) >= limit:
+                    break
+        return result
+
+    def update_enriched_messages(self, group_id, messages):
+        """Persist bounded forward content and rebuild its search text in place."""
+        self._conn.executemany(
+            "UPDATE messages SET search_text = ?, raw_json = ? "
+            "WHERE group_id = ? AND message_id = ?",
+            [(self._build_search_text(message), json.dumps(message, ensure_ascii=False),
+              group_id, str(message.get("message_id", ""))) for message in messages],
+        )
+        self._conn.commit()
 
     def query_messages(
         self,
