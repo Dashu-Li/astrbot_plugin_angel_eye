@@ -231,7 +231,16 @@ async def enrich_event(event, resolver):
 
 async def enrich_request(event, request, resolver):
     blocks = await enrich_event(event, resolver)
-    existing = (request.prompt or "") + str(request.extra_user_content_parts or [])
-    missing = [block for block in blocks if block not in existing]
+    existing = [request.prompt or ""]
+    for part in request.extra_user_content_parts or []:
+        if isinstance(part, str):
+            text = part
+        elif isinstance(part, dict):
+            text = part.get("text") if part.get("type") == "text" else None
+        else:
+            text = getattr(part, "text", None)
+        if isinstance(text, str):
+            existing.append(text)
+    missing = [block for block in blocks if not any(block in text for text in existing)]
     if missing:
         request.prompt = ((request.prompt or "") + "\n\n" + "\n\n".join(missing)).strip()

@@ -71,6 +71,9 @@ class QQChatHistoryService:
         # 仅接受当前协议端回包确认过的游标，不复用 NapCat 持久化序号。
         self._snowluma_history_cursors: Dict[tuple[int, str], int] = {}
         self._napcat_history_cursors: Dict[tuple[int, str], int] = {}
+        # Stable message IDs keep failed resources from monopolizing each query.
+        # Retain at most 64 IDs per scope and 128 recently used connection/groups.
+        self._forward_index_rotation: Dict[tuple[int, str], List[str]] = {}
 
     async def get_messages(
         self,
@@ -125,11 +128,11 @@ class QQChatHistoryService:
 
             if keywords:
                 pending = self.repo.pending_forward_messages(
-                    group_id, query_start, query_end, filter_user_ids,
+                    group_id, query_start, query_end, filter_user_ids, limit=64,
                 )
                 if pending:
-                    enriched = await self.rich_content_resolver.enrich_messages(
-                        bot, pending[:3], scope=group_id, budget=rich_budget,
+                    enriched = await self._index_pending_forwards(
+                        bot, group_id, pending, rich_budget,
                     )
                     self.repo.update_enriched_messages(group_id, enriched)
                     stop_reasons.append("forward:index_bounded")
@@ -186,6 +189,28 @@ class QQChatHistoryService:
             history_exhausted=final_state.history_exhausted,
             stop_reasons=stop_reasons,
         )
+
+    async def _index_pending_forwards(self, bot, group_id, pending, budget):
+        key = (id(bot), str(group_id))
+        candidates = {str(message["message_id"]): message for message in pending}
+        previous = self._forward_index_rotation.pop(key, [])
+        queue = [message_id for message_id in previous if message_id in candidates]
+        queue.extend(message_id for message_id in candidates if message_id not in queue)
+
+        enriched = []
+        attempted = 0
+        for message_id in queue[:3]:
+            if budget[0] <= 0:
+                break
+            enriched.extend(await self.rich_content_resolver.enrich_messages(
+                bot, [candidates[message_id]], scope=group_id, budget=budget,
+            ))
+            attempted += 1
+
+        self._forward_index_rotation[key] = queue[attempted:] + queue[:attempted]
+        while len(self._forward_index_rotation) > 128:
+            self._forward_index_rotation.pop(next(iter(self._forward_index_rotation)))
+        return enriched
 
     async def _initialize_self_id(self, bot: "Bot") -> str:
         try:
@@ -385,9 +410,6 @@ class QQChatHistoryService:
         seen_cursors: set[int] = set()
 
         while True:
-            if cursor_id in seen_cursors:
-                stop_reason = "cursor_cycle"
-                break
             try:
                 server_messages = await self._fetch_page(bot, group_id, cursor_id)
                 consecutive_failures = 0
@@ -400,7 +422,6 @@ class QQChatHistoryService:
                 await asyncio.sleep(1)
                 continue
 
-            seen_cursors.add(cursor_id)
             pages_fetched += 1
             if not server_messages:
                 stop_reason = "empty"
@@ -423,12 +444,16 @@ class QQChatHistoryService:
                 stop_reason = "target_reached"
                 break
 
-            # A different cursor is progress even when cached pages share a
-            # second. Repeated cursor values are bounded by the cycle guard.
+            # The requested cursor may have been replaced with 0 while the
+            # connection reestablishes its anchor. Track only returned anchors.
             next_cursor = self.repo.extract_anchor(server_messages[0])
-            if next_cursor is None or next_cursor == cursor_id:
+            if next_cursor is None:
                 stop_reason = "cursor_stuck"
                 break
+            if next_cursor in seen_cursors:
+                stop_reason = "cursor_cycle"
+                break
+            seen_cursors.add(next_cursor)
             cursor_id = next_cursor
             await asyncio.sleep(self.config.server_call_delay)
 

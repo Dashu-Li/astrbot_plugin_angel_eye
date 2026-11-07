@@ -57,6 +57,7 @@ class ReviewTests(unittest.IsolatedAsyncioTestCase):
         self.service._group_locks = {}
         self.service._snowluma_history_cursors = {}
         self.service._napcat_history_cursors = {}
+        self.service._forward_index_rotation = {}
         self.service.rich_content_resolver = RichContentResolver()
 
     def test_non_ascii_size_digits_never_break_rendering_or_indexing(self):
