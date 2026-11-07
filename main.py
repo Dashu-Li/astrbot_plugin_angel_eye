@@ -12,11 +12,7 @@ from .services.rich_content_service import RichContentResolver
 from .tools.qq_history_tool import QQHistorySearchTool
 
 # 导入 logger
-try:
-    from astrbot.api import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 @register(
     "astrbot_plugin_angel_eye",

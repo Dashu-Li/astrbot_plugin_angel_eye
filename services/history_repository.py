@@ -205,7 +205,7 @@ class HistoryRepository:
 
             sender = msg.get("sender", {}) or {}
             user_id = str(sender.get("user_id", "")) or None
-            nickname = str(sender.get("nickname", "")) or None
+            nickname = str(sender.get("card") or sender.get("nickname") or "") or None
             message_seq = self._extract_anchor(msg)
             search_text = self._build_search_text(msg)
 
@@ -392,7 +392,7 @@ class HistoryRepository:
                     text_parts.append(extract_rich_segments([component]))
 
         sender = msg.get("sender", {}) or {}
-        nickname = sender.get("nickname")
+        nickname = sender.get("card") or sender.get("nickname")
         user_id = sender.get("user_id")
         if nickname:
             text_parts.append(str(nickname))
