@@ -169,7 +169,7 @@ def format_unified_message(message_dict: Dict[str, Any], self_id: str = None) ->
                     elif comp_type == "video":
                         content_parts.append("[视频]")
                     elif comp_type == "reply":
-                        content_parts.append("[回复]")
+                        content_parts.append(format_rich_segment(component))
                     elif comp_type == "forward":
                         content_parts.append("[转发消息]")
                     else:

@@ -24,6 +24,21 @@ def _text(value, limit=2000):
     return value[:limit] + ("…[文本已截断]" if len(value) > limit else "")
 
 
+def format_reply_segment(data):
+    """Expose the actual QQ target without treating arbitrary content as an ID.
+
+    A reply only establishes a relationship; this renderer does not fetch the
+    target or claim that an embedded target belongs to the current group.
+    """
+    value = data.get("id") if isinstance(data, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return "[回复]"
+    value = str(value).strip()
+    if not re.fullmatch(r"-?[0-9]{1,30}", value) or int(value) == 0:
+        return "[回复]"
+    return f"[回复消息ID:{int(value)}]"
+
+
 def public_url(value):
     """Preserve usable web resource queries; never expose local paths as URLs.
 
@@ -251,7 +266,7 @@ def format_rich_segment(segment, depth=0):
     if kind == "face":
         return "[表情:" + _text(data.get("id", "?"), 32) + "]"
     if kind == "reply":
-        return "[回复]"
+        return format_reply_segment(data)
     if kind == "at":
         target = _text(data.get("qq", "?"), 64)
         return "[@全体成员]" if target == "all" else f"[@{target}]"
