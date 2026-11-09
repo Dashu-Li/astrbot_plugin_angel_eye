@@ -6,7 +6,7 @@ import ipaddress
 import json
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 MAX_INPUT = 131072
 MAX_OUTPUT = 12000
@@ -36,7 +36,7 @@ def format_reply_segment(data):
     value = str(value).strip()
     if not re.fullmatch(r"-?[0-9]{1,30}", value) or int(value) == 0:
         return "[回复]"
-    return f"[回复消息ID:{int(value)}]"
+    return f"[回复消息ID:{value}]"
 
 
 def public_url(value):
@@ -72,6 +72,45 @@ def public_url(value):
     except (ValueError, UnicodeError):
         return ""
     return value
+
+
+_CREDENTIAL_QUERY_KEYS = frozenset({
+    "token", "accesstoken", "refreshtoken", "idtoken", "authorization", "auth",
+    "authkey", "apikey", "key", "secret", "clientsecret", "password", "passwd",
+    "credential", "credentials", "signature", "sig", "sign", "ticket",
+    "session", "sessionid", "sessionkey", "cookie", "rkey", "gtk",
+})
+
+
+def _card_url(value):
+    """Remove recognized URL credentials from displayed card metadata only."""
+    value = public_url(value)
+    if not value:
+        return ""
+
+    def redact(query):
+        retained = []
+        parts = re.split(r"([&;])", query)
+        for index in range(0, len(parts), 2):
+            pair = parts[index]
+            name = unquote(pair.partition("=")[0]).lower()
+            normalized = re.sub(r"[^a-z0-9]", "", name)
+            if normalized in _CREDENTIAL_QUERY_KEYS or normalized.startswith(("xamz", "xgoog")):
+                continue
+            if retained:
+                retained.append(parts[index - 1])
+            retained.append(pair)
+        return "".join(retained)
+
+    parsed = urlsplit(value)
+    fragment = parsed.fragment
+    path, separator, query = fragment.partition("?")
+    if separator:
+        cleaned = redact(query)
+        fragment = path + ("?" + cleaned if cleaned else "")
+    elif "=" in fragment:
+        fragment = redact(fragment)
+    return urlunsplit(parsed._replace(query=redact(parsed.query), fragment=fragment))
 
 
 def _join(parts, limit=MAX_OUTPUT):
@@ -115,7 +154,7 @@ def extract_json_card(data):
             lines.append(f"{label}：{value}")
 
     def emit_url(label, value):
-        value = public_url(value)
+        value = _card_url(value)
         if value and value not in seen_urls:
             seen_urls.add(value)
             lines.append(f"{label}：{value}")
@@ -161,11 +200,11 @@ def extract_xml_card(data):
         if tag in ("title", "summary", "desc", "text", "content"):
             candidates.append(_text(node.text))
         for key in ("url", "jumpurl", "href"):
-            url = public_url(node.attrib.get(key))
+            url = _card_url(node.attrib.get(key))
             if url:
                 candidates.append("链接：" + url)
         for key in ("cover", "preview", "src"):
-            url = public_url(node.attrib.get(key))
+            url = _card_url(node.attrib.get(key))
             if url:
                 candidates.append("预览图：" + url)
         if tag == "source":

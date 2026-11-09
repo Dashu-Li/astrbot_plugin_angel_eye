@@ -82,7 +82,7 @@ class FakeEvent:
 class RenderingTests(unittest.TestCase):
     def test_miniapp_preserves_shared_content_and_queries(self):
         text = extract_json_card(card())
-        for expected in ("测试卡片标题", "https://example.org/story?id=7", "https://cdn.example.org/p.png?signature=keep&n=1"):
+        for expected in ("测试卡片标题", "https://example.org/story?id=7", "https://cdn.example.org/p.png?n=1"):
             self.assertIn(expected, text)
         self.assertEqual(text.count("https://example.org/story?id=7"), 1)
         for secret in ("PRIVATE_CONFIG_SECRET", "PRIVATE_EXTRA_SECRET", "mqqapi://", "logo.png"):
@@ -306,10 +306,10 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
                       message_str="普通引用正文", text="普通引用正文")
         event = FakeEvent([Plain(text="请看引用"), reply])
         original_message = event.message_obj
-        self.assertEqual(await enrich_event(event, RichContentResolver()), [])
-        self.assertIs(event.message_obj, original_message)
+        self.assertIn("[引用目标]\n[回复消息ID:-9]", await enrich_event(event, RichContentResolver()))
+        self.assertIsNot(event.message_obj, original_message)
         self.assertIs(event.get_messages()[1], reply)
-        self.assertEqual(event.message_str, "请看引用")
+        self.assertEqual(event.message_str, "请看引用\n[引用目标]\n[回复消息ID:-9]")
 
     async def test_forward_resolves_and_caches_read_only_action(self):
         resolver, bot = RichContentResolver(), FakeBot()

@@ -96,9 +96,9 @@ def test_nested_forward_keeps_its_explicit_target_without_fetching_or_flattening
     (-102, "-102"),
     ("104", "104"),
     ("  -102  ", "-102"),
-    ("000123", "123"),
+    ("000123", "000123"),
 ])
-def test_safe_numeric_reply_ids_are_normalized_in_both_outputs(value, expected):
+def test_safe_numeric_reply_ids_are_preserved_in_both_outputs(value, expected):
     segment = reply(value)
     label = f"[回复消息ID:{expected}]"
     assert format_rich_segment(segment) == label

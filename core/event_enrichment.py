@@ -6,13 +6,14 @@ from collections import Counter
 
 from astrbot.api.message_components import Plain, Reply
 
-from .rich_message import extract_rich_segments
+from .rich_message import extract_rich_segments, format_reply_segment
 
 
 VOICE_TRANSCRIPT_PREFIX = "[语音转写（已成功识别）]\n"
 QUOTE_BODY_PREFIX = "[引用消息正文]\n"
+REPLY_TARGET_PREFIX = "[引用目标]\n"
 DIRECT_BLOCK_PREFIXES = (
-    "[消息自带内容补充]\n", VOICE_TRANSCRIPT_PREFIX, QUOTE_BODY_PREFIX,
+    "[消息自带内容补充]\n", VOICE_TRANSCRIPT_PREFIX, QUOTE_BODY_PREFIX, REPLY_TARGET_PREFIX,
 )
 REPLY_RICH_PREFIX = "[引用消息自带内容补充]\n"
 
@@ -159,6 +160,16 @@ async def enrich_event(event, resolver):
     summary = rich_summary(raw_chain, _plain_text(chain))
     supplements = []
     changed = False
+    targets = list(dict.fromkeys(
+        format_reply_segment(vars(component))
+        for component in original_chain if isinstance(component, Reply)
+    ))
+    targets = [target for target in targets if target != "[回复]"]
+    if targets:
+        block = REPLY_TARGET_PREFIX + "\n".join(targets)
+        if not any(isinstance(c, Plain) and c.text == block for c in chain):
+            chain.append(Plain(text=block))
+            changed = True
     if transcripts:
         block = VOICE_TRANSCRIPT_PREFIX + "\n".join(transcripts)
         if not any(isinstance(c, Plain) and c.text == block for c in chain):
