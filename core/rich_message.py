@@ -78,7 +78,7 @@ _CREDENTIAL_QUERY_KEYS = frozenset({
     "token", "accesstoken", "refreshtoken", "idtoken", "authorization", "auth",
     "authkey", "apikey", "key", "secret", "clientsecret", "password", "passwd",
     "credential", "credentials", "signature", "sig", "sign", "ticket",
-    "session", "sessionid", "sessionkey", "cookie", "rkey", "gtk",
+    "session", "sessionid", "sessionkey", "cookie", "rkey", "gtk", "jwt", "accesskey",
 })
 
 

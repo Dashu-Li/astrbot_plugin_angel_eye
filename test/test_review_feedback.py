@@ -49,6 +49,10 @@ def test_reply_target_keeps_validated_original_digits(value):
     "id=7&%74oken=SYNTHETIC_SECRET&n=2",
     "id=7&X-Amz-Signature=SYNTHETIC_SECRET&n=2",
     "id=7&api_key=SYNTHETIC_SECRET&n=2",
+    "id=7&jwt=SYNTHETIC_SECRET&n=2",
+    "id=7&access_key=SYNTHETIC_SECRET&n=2",
+    "id=7&%6aWt=SYNTHETIC_SECRET&n=2",
+    "id=7&Access-Key=SYNTHETIC_SECRET&n=2",
     "id=7;rkey=SYNTHETIC_SECRET;n=2",
 ])
 def test_json_and_xml_card_links_drop_credential_fields_only(query):
@@ -65,6 +69,8 @@ def test_json_and_xml_card_links_drop_credential_fields_only(query):
 
 @pytest.mark.parametrize("fragment,expected", [
     ("token=SYNTHETIC_SECRET&tab=2", "tab=2"),
+    ("jwt=SYNTHETIC_SECRET&tab=2", "tab=2"),
+    ("/view?access_key=SYNTHETIC_SECRET&tab=2", "/view?tab=2"),
     ("/view?signature=SYNTHETIC_SECRET&tab=2", "/view?tab=2"),
     ("/view?tab=2", "/view?tab=2"),
 ])
@@ -74,8 +80,9 @@ def test_card_fragment_credentials_are_not_sent_as_metadata(fragment, expected):
     assert "https://example.org/story#" + expected in text
 
 
-def test_credential_values_are_absent_from_new_keyword_index(tmp_path):
-    card = {"title": "synthetic card", "url": "https://example.org/story?id=7&token=SYNTHETIC_SECRET"}
+@pytest.mark.parametrize("credential_key", ["token", "jwt", "access_key"])
+def test_credential_values_are_absent_from_new_keyword_index(tmp_path, credential_key):
+    card = {"title": "synthetic card", "url": f"https://example.org/story?id=7&{credential_key}=SYNTHETIC_SECRET"}
     message = {
         "message_id": "101", "time": 100,
         "sender": {"user_id": "200", "nickname": "member"},
@@ -93,8 +100,9 @@ def test_credential_values_are_absent_from_new_keyword_index(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_card_credentials_never_enter_custom_request_and_input_is_retained():
-    card = {"title": "synthetic card", "url": "https://example.org/story?id=7&token=SYNTHETIC_SECRET"}
+@pytest.mark.parametrize("credential_key", ["token", "jwt", "access_key"])
+async def test_card_credentials_never_enter_custom_request_and_input_is_retained(credential_key):
+    card = {"title": "synthetic card", "url": f"https://example.org/story?id=7&{credential_key}=SYNTHETIC_SECRET"}
     component = Json(data=json.dumps(card))
     event = Event(component)
     request = ProviderRequest(prompt="rewritten request")
